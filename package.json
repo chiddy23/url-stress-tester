@@ -1,0 +1,12 @@
+{
+  "name": "url-stress-tester",
+  "private": true,
+  "type": "module",
+  "description": "Browser URL stress tester + optional Node CORS-bypass proxy for Render",
+  "scripts": {
+    "start": "node stress-proxy.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

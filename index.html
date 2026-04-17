@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>URL stress tester</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #3d9cf0;
+      --ok: #3ecf8e;
+      --bad: #f06b6b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 1.5rem;
+      line-height: 1.5;
+    }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.5rem; }
+    .warn {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 1.25rem;
+      max-width: 52rem;
+    }
+    .grid {
+      display: grid;
+      gap: 1rem;
+      max-width: 52rem;
+    }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.35rem; }
+    input[type="url"],
+    input[type="number"],
+    select {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid #2a3a52;
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      font-size: 1rem;
+    }
+    select {
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238b9cb3' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.65rem center;
+      padding-right: 2rem;
+    }
+    input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: flex-end;
+    }
+    .field { flex: 1 1 12rem; }
+    .batch-input-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: stretch;
+    }
+    .batch-input-row input { flex: 1; min-width: 0; }
+    button.btn-inline {
+      flex: 0 0 auto;
+      padding: 0.55rem 0.9rem;
+      font-size: 0.9rem;
+      white-space: nowrap;
+      background: #2a3a52;
+      color: var(--text);
+    }
+    button.btn-inline:hover:not(:disabled) {
+      background: #354a6a;
+    }
+    .hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin: 0.5rem 0 0;
+      max-width: 52rem;
+      line-height: 1.45;
+    }
+    button {
+      padding: 0.65rem 1.25rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--accent);
+      color: #0a0e14;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.stop { background: var(--bad); color: #fff; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+    .stat {
+      background: var(--panel);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      border: 1px solid #2a3a52;
+    }
+    .stat k { display: block; font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .stat v { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .stat v.ok { color: var(--ok); }
+    .stat v.bad { color: var(--bad); }
+    .stat-wide {
+      grid-column: 1 / -1;
+      max-width: 52rem;
+    }
+    .stat-wide v {
+      font-size: 0.95rem;
+      font-weight: 500;
+      word-break: break-word;
+    }
+    .log {
+      margin-top: 1rem;
+      max-width: 52rem;
+      max-height: 14rem;
+      overflow: auto;
+      background: #0a0e14;
+      border: 1px solid #2a3a52;
+      border-radius: 8px;
+      padding: 0.75rem;
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 0.78rem;
+      color: #b8c5d6;
+    }
+    .log div { white-space: pre-wrap; word-break: break-all; }
+    .proxy-box {
+      background: var(--panel);
+      border: 1px solid #2a3a52;
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      max-width: 52rem;
+    }
+    .proxy-box label.check {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      cursor: pointer;
+      color: var(--text);
+      font-size: 0.95rem;
+      margin-bottom: 0.65rem;
+    }
+    .proxy-box input[type="checkbox"] {
+      width: 1.1rem;
+      height: 1.1rem;
+      accent-color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <h1>URL stress tester</h1>
+  <p class="warn">
+    Use only on systems you own or have explicit permission to load-test. In the browser alone, cross-origin
+    <code>fetch</code> is blocked unless the target sends CORS headers. To hit arbitrary <code>http(s)</code> URLs anyway,
+    enable the proxy below (same repo: <code>stress-proxy.mjs</code> on Render or locally). For heavy prod tests, prefer k6 or wrk.
+  </p>
+
+  <div class="grid">
+    <div class="field">
+      <label for="url">Target URL</label>
+      <input id="url" type="url" placeholder="https://example.com/api/health" autocomplete="off" />
+    </div>
+    <div class="proxy-box">
+      <label class="check">
+        <input type="checkbox" id="useProxy" />
+        Use proxy (local or VPN host — reaches any http(s) URL; bypasses browser CORS)
+      </label>
+      <label for="proxyBase">Proxy base URL</label>
+      <div class="batch-input-row" style="margin-top: 0.35rem">
+        <input id="proxyBase" type="url" value="http://127.0.0.1:8765" placeholder="http://127.0.0.1:8765 or https://stress.example.com" autocomplete="off" />
+        <button type="button" id="testProxyBtn" class="btn-inline" title="GET /health on the proxy">Test proxy</button>
+      </div>
+      <label for="proxyToken" style="margin-top: 0.65rem">Proxy token (optional)</label>
+      <input id="proxyToken" type="password" placeholder="Only if server has STRESS_PROXY_TOKEN set — not saved in the browser" autocomplete="off" />
+      <p class="hint" style="margin-top: 0.65rem; margin-bottom: 0">
+        Local: <code>node stress-proxy.mjs</code> (default <code>127.0.0.1</code>). <strong>Render:</strong> deploy this repo with
+        <code>package.json</code> + <code>render.yaml</code>, set <code>STRESS_PROXY_TOKEN</code> in the Render dashboard, then use
+        your <code>https://…onrender.com</code> URL as Proxy base (token required for load; <code>GET /health</code> stays public for
+        Render’s probe). <strong>Vercel:</strong> fine for hosting the HTML only — run the proxy on Render (or a VPN box), not as
+        Vercel serverless. Token is session-only (re-enter after refresh).
+      </p>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="maxBatch">Max batch size</label>
+        <div class="batch-input-row">
+          <input id="maxBatch" type="number" min="1" max="256" value="20" title="Concurrent requests per burst (1–256)" />
+          <button type="button" id="setMaxBatch" class="btn-inline" title="Set batch size to the maximum (256)">Max</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="delay">Delay between bursts (ms, 0 = fastest)</label>
+        <input id="delay" type="number" min="0" max="10000" value="0" step="10" />
+      </div>
+      <div class="field">
+        <label for="method">HTTP method</label>
+        <select id="method" title="Method used for every request in the run. Stop and Start again if you change it mid-run.">
+          <option value="GET" selected>GET</option>
+          <option value="POST">POST</option>
+          <option value="PUT">PUT</option>
+          <option value="PATCH">PATCH</option>
+          <option value="DELETE">DELETE</option>
+          <option value="HEAD">HEAD</option>
+          <option value="OPTIONS">OPTIONS</option>
+        </select>
+      </div>
+    </div>
+    <p class="hint">
+      Max batch size is how many requests are in flight at once for each burst: the tool starts that many
+      <code>fetch</code> calls together, waits until all of them finish, then starts the next burst (after the delay between
+      bursts, if any). Raising the batch increases how hard you hit the URL in each wave; values that are too high can create
+      more errors because of browser connection limits or an overloaded server. Allowed range: 1–256. Use the Max button
+      next to the field to jump to 256 instantly.
+    </p>
+    <div class="row">
+      <button type="button" id="toggle">Start</button>
+      <button type="button" id="reset" style="background: #2a3a52; color: var(--text);">Reset stats</button>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><k>Elapsed</k><v id="elapsed">0s</v></div>
+    <div class="stat"><k>Requests sent</k><v id="sent">0</v></div>
+    <div class="stat"><k>HTTP OK (2xx)</k><v class="ok" id="ok2xx">0</v></div>
+    <div class="stat"><k>Other status</k><v id="other">0</v></div>
+    <div class="stat"><k>Network / CORS errors</k><v class="bad" id="err">0</v></div>
+    <div class="stat"><k>Req/s (since start)</k><v id="rps">0</v></div>
+    <div class="stat"><k>Avg latency (ms)</k><v id="lat">—</v></div>
+    <div class="stat"><k>p95 latency (ms)</k><v id="p95">—</v></div>
+    <div class="stat stat-wide">
+      <k>HTTP status counts</k>
+      <v id="statusBreakdown">—</v>
+    </div>
+  </div>
+
+  <div class="log" id="log" aria-live="polite"></div>
+
+  <script>
+    (function () {
+      const $ = (id) => document.getElementById(id);
+      const urlEl = $("url");
+      const maxBatchEl = $("maxBatch");
+      const setMaxBatchBtn = $("setMaxBatch");
+      const delayEl = $("delay");
+      const methodEl = $("method");
+      const toggleBtn = $("toggle");
+      const resetBtn = $("reset");
+      const logEl = $("log");
+      const useProxyEl = $("useProxy");
+      const proxyBaseEl = $("proxyBase");
+      const proxyTokenEl = $("proxyToken");
+      const testProxyBtn = $("testProxyBtn");
+
+      let running = false;
+      let abort = null;
+      let startTime = 0;
+      let sent = 0;
+      let ok2xx = 0;
+      let otherStatus = 0;
+      let netErr = 0;
+      const latencies = [];
+      const statusCounts = Object.create(null);
+      const maxLogLines = 80;
+
+      function getMethod() {
+        return (methodEl.value || "GET").trim().toUpperCase() || "GET";
+      }
+
+      function isProxyMode() {
+        return Boolean(useProxyEl.checked && proxyBaseEl.value.trim());
+      }
+
+      function proxyForwardUrl() {
+        return proxyBaseEl.value.trim().replace(/\/+$/, "") + "/forward";
+      }
+
+      function proxyAuthHeaders() {
+        const tok = proxyTokenEl.value.trim();
+        if (!tok) return {};
+        return { Authorization: "Bearer " + tok };
+      }
+
+      async function pingProxy(baseRaw) {
+        const base = baseRaw.trim().replace(/\/+$/, "");
+        if (!base) return false;
+        const url = base + "/health";
+        const c = new AbortController();
+        const t = setTimeout(() => c.abort(), 5000);
+        const headers = Object.assign({ Accept: "application/json" }, proxyAuthHeaders());
+        try {
+          const r = await fetch(url, {
+            method: "GET",
+            cache: "no-store",
+            mode: "cors",
+            signal: c.signal,
+            headers,
+          });
+          clearTimeout(t);
+          if (!r.ok) return false;
+          const data = await r.json();
+          return Boolean(data && data.ok === true && data.service === "stress-proxy");
+        } catch (_) {
+          clearTimeout(t);
+          return false;
+        }
+      }
+
+      function persistProxySettings() {
+        try {
+          localStorage.setItem("stressTesterProxyBase", proxyBaseEl.value.trim());
+          localStorage.setItem("stressTesterUseProxy", useProxyEl.checked ? "1" : "0");
+        } catch (_) {
+          /* private mode etc. */
+        }
+      }
+
+      function loadProxySettings() {
+        try {
+          const p = localStorage.getItem("stressTesterProxyBase");
+          const u = localStorage.getItem("stressTesterUseProxy");
+          if (p) proxyBaseEl.value = p;
+          if (u === "1") useProxyEl.checked = true;
+        } catch (_) {
+          /* ignore */
+        }
+      }
+
+      loadProxySettings();
+      useProxyEl.addEventListener("change", persistProxySettings);
+      proxyBaseEl.addEventListener("blur", persistProxySettings);
+
+      testProxyBtn.addEventListener("click", async () => {
+        const pb = proxyBaseEl.value.trim();
+        if (!pb) {
+          logLine("Enter proxy base URL first.");
+          return;
+        }
+        try {
+          new URL(pb);
+        } catch {
+          logLine("Invalid proxy base URL.");
+          return;
+        }
+        logLine("Pinging proxy…");
+        const ok = await pingProxy(pb);
+        logLine(
+          ok
+            ? "Proxy OK — stress-proxy at " + pb
+            : "Proxy not reachable or unauthorized at " +
+                pb +
+                ". Check VPN/URL, run node stress-proxy.mjs, and Proxy token if STRESS_PROXY_TOKEN is set."
+        );
+      });
+
+      function maxBatchCap() {
+        const m = parseInt(maxBatchEl.getAttribute("max"), 10);
+        return Number.isFinite(m) && m >= 1 ? m : 256;
+      }
+
+      function clampMaxBatchInput() {
+        const cap = maxBatchCap();
+        let v = parseInt(maxBatchEl.value, 10);
+        if (!Number.isFinite(v)) v = 1;
+        v = Math.max(1, Math.min(cap, v));
+        maxBatchEl.value = String(v);
+        return v;
+      }
+
+      maxBatchEl.addEventListener("change", clampMaxBatchInput);
+      maxBatchEl.addEventListener("blur", clampMaxBatchInput);
+
+      setMaxBatchBtn.addEventListener("click", () => {
+        maxBatchEl.value = String(maxBatchCap());
+        clampMaxBatchInput();
+      });
+
+      function logLine(msg) {
+        const div = document.createElement("div");
+        div.textContent = new Date().toISOString().slice(11, 23) + " " + msg;
+        logEl.prepend(div);
+        while (logEl.children.length > maxLogLines) logEl.removeChild(logEl.lastChild);
+      }
+
+      function percentile(arr, p) {
+        if (!arr.length) return null;
+        const s = [...arr].sort((a, b) => a - b);
+        const idx = Math.min(s.length - 1, Math.floor((p / 100) * s.length));
+        return s[idx];
+      }
+
+      function updateUI() {
+        const elapsedSec = startTime ? (performance.now() - startTime) / 1000 : 0;
+        $("elapsed").textContent = elapsedSec.toFixed(1) + "s";
+        $("sent").textContent = String(sent);
+        $("ok2xx").textContent = String(ok2xx);
+        $("other").textContent = String(otherStatus);
+        $("err").textContent = String(netErr);
+        const rps = elapsedSec > 0 ? sent / elapsedSec : 0;
+        $("rps").textContent = rps.toFixed(1);
+        if (latencies.length) {
+          const sum = latencies.reduce((a, b) => a + b, 0);
+          $("lat").textContent = (sum / latencies.length).toFixed(1);
+          const p95 = percentile(latencies, 95);
+          $("p95").textContent = p95 != null ? p95.toFixed(1) : "—";
+        } else {
+          $("lat").textContent = "—";
+          $("p95").textContent = "—";
+        }
+        const breakdown = Object.entries(statusCounts)
+          .sort((a, b) => b[1] - a[1])
+          .map(([code, n]) => code + " × " + n)
+          .join(" · ");
+        $("statusBreakdown").textContent = breakdown || "—";
+      }
+
+      let raf = 0;
+      function scheduleUI() {
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          updateUI();
+          if (running) scheduleUI();
+        });
+      }
+
+      async function oneRequest(signal, target, method) {
+        const t0 = performance.now();
+        try {
+          let code;
+
+          if (isProxyMode()) {
+            const res = await fetch(proxyForwardUrl(), {
+              method: "POST",
+              signal,
+              cache: "no-store",
+              mode: "cors",
+              headers: Object.assign({ "Content-Type": "application/json" }, proxyAuthHeaders()),
+              body: JSON.stringify({ url: target, method: method || "GET" }),
+            });
+            const text = await res.text();
+            let data = null;
+            try {
+              data = JSON.parse(text);
+            } catch (_) {
+              /* ignore */
+            }
+            const ms = performance.now() - t0;
+            latencies.push(ms);
+            if (latencies.length > 2000) latencies.splice(0, latencies.length - 2000);
+            sent++;
+            if (!res.ok || !data || typeof data !== "object") {
+              netErr++;
+              return;
+            }
+            if (data.ok === true && typeof data.status === "number") {
+              code = data.status;
+            } else {
+              netErr++;
+              return;
+            }
+          } else {
+            const res = await fetch(target, {
+              method: method || "GET",
+              signal,
+              cache: "no-store",
+              mode: "cors",
+            });
+            const ms = performance.now() - t0;
+            latencies.push(ms);
+            if (latencies.length > 2000) latencies.splice(0, latencies.length - 2000);
+            sent++;
+            code = res.status;
+          }
+
+          const key = String(code);
+          statusCounts[key] = (statusCounts[key] || 0) + 1;
+          if (code >= 200 && code < 300) ok2xx++;
+          else otherStatus++;
+        } catch (e) {
+          if (e && e.name === "AbortError") return;
+          sent++;
+          netErr++;
+        }
+      }
+
+      async function burstLoop() {
+        const signal = abort.signal;
+        const target = urlEl.value.trim();
+        const delayMs = Math.max(0, parseInt(delayEl.value, 10) || 0);
+
+        while (running && !signal.aborted) {
+          const method = getMethod();
+          const n = Math.max(1, Math.min(maxBatchCap(), parseInt(maxBatchEl.value, 10) || 1));
+          const batch = [];
+          for (let i = 0; i < n; i++) batch.push(oneRequest(signal, target, method));
+          await Promise.allSettled(batch);
+          if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+        }
+      }
+
+      toggleBtn.addEventListener("click", () => {
+        if (running) {
+          running = false;
+          if (abort) abort.abort();
+          abort = null;
+          toggleBtn.textContent = "Start";
+          toggleBtn.classList.remove("stop");
+          testProxyBtn.disabled = false;
+          logLine("Stopped.");
+          updateUI();
+          return;
+        }
+
+        void (async function startRun() {
+          const u = urlEl.value.trim();
+          if (!u) {
+            logLine("Enter a URL first.");
+            return;
+          }
+          try {
+            new URL(u);
+          } catch {
+            logLine("Invalid URL.");
+            return;
+          }
+
+          if (useProxyEl.checked) {
+            const pb = proxyBaseEl.value.trim();
+            if (!pb) {
+              logLine("Proxy enabled: enter proxy base URL (e.g. http://127.0.0.1:8765).");
+              return;
+            }
+            try {
+              new URL(pb);
+            } catch {
+              logLine("Invalid proxy base URL.");
+              return;
+            }
+            logLine("Checking proxy (GET /health)…");
+            const alive = await pingProxy(pb);
+            if (!alive) {
+              logLine(
+                "Proxy not reachable or unauthorized at " +
+                  pb +
+                  ". Check VPN, URL, token (STRESS_PROXY_TOKEN), and that node stress-proxy.mjs is running on the host."
+              );
+              return;
+            }
+            logLine("Proxy OK.");
+          }
+
+          clampMaxBatchInput();
+
+          running = true;
+          abort = new AbortController();
+          if (!startTime) startTime = performance.now();
+          toggleBtn.textContent = "Stop";
+          toggleBtn.classList.add("stop");
+          testProxyBtn.disabled = true;
+          logLine(
+            "Started → " +
+              getMethod() +
+              " " +
+              u +
+              (isProxyMode() ? " (via proxy " + proxyBaseEl.value.trim() + ")" : "")
+          );
+          scheduleUI();
+          burstLoop().catch((e) => {
+            if (e && e.name === "AbortError") return;
+            logLine("Loop error: " + (e && e.message ? e.message : String(e)));
+          });
+        })();
+      });
+
+      resetBtn.addEventListener("click", () => {
+        sent = ok2xx = otherStatus = netErr = 0;
+        startTime = running ? performance.now() : 0;
+        latencies.length = 0;
+        for (const k of Object.keys(statusCounts)) delete statusCounts[k];
+        logLine("Stats reset.");
+        updateUI();
+      });
+
+      setInterval(() => {
+        if (running) updateUI();
+      }, 500);
+
+      updateUI();
+      logLine("Ready. Set URL, max batch size, optional delay between bursts, then Start.");
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# https://render.com — Web Service for stress-proxy.mjs
+# After first deploy: Dashboard → Environment → set STRESS_PROXY_TOKEN (long random string).
+# In index.html: enable proxy, set Proxy base to https://<service>.onrender.com, paste the same token.
+
+services:
+  - type: web
+    name: stress-proxy
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: "echo ok"
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: STRESS_PROXY_TOKEN
+        sync: false
