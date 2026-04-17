@@ -100,7 +100,23 @@
       color: #0a0e14;
     }
     button:disabled { opacity: 0.45; cursor: not-allowed; }
-    button.stop { background: var(--bad); color: #fff; }
+    button.stop {
+      background: var(--bad);
+      color: #fff;
+    }
+    button.stop:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .control-bar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: var(--bg);
+      padding: 0.65rem 0 0.85rem;
+      margin-bottom: 0.25rem;
+      border-bottom: 1px solid #2a3a52;
+    }
     .stats {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
@@ -232,8 +248,9 @@
       more errors because of browser connection limits or an overloaded server. Allowed range: 1–256. Use the Max button
       next to the field to jump to 256 instantly.
     </p>
-    <div class="row">
-      <button type="button" id="toggle">Start</button>
+    <div class="row control-bar">
+      <button type="button" id="startBtn">Start</button>
+      <button type="button" id="stopBtn" class="stop" disabled>Stop</button>
       <button type="button" id="reset" style="background: #2a3a52; color: var(--text);">Reset stats</button>
     </div>
   </div>
@@ -263,7 +280,8 @@
       const setMaxBatchBtn = $("setMaxBatch");
       const delayEl = $("delay");
       const methodEl = $("method");
-      const toggleBtn = $("toggle");
+      const startBtn = $("startBtn");
+      const stopBtn = $("stopBtn");
       const resetBtn = $("reset");
       const logEl = $("log");
       const useProxyEl = $("useProxy");
@@ -282,6 +300,12 @@
       const latencies = [];
       const statusCounts = Object.create(null);
       const maxLogLines = 80;
+
+      function syncRunButtons() {
+        startBtn.disabled = running;
+        stopBtn.disabled = !running;
+        testProxyBtn.disabled = running;
+      }
 
       function getMethod() {
         return (methodEl.value || "GET").trim().toUpperCase() || "GET";
@@ -560,18 +584,18 @@
         }
       }
 
-      toggleBtn.addEventListener("click", () => {
-        if (running) {
-          running = false;
-          if (abort) abort.abort();
-          abort = null;
-          toggleBtn.textContent = "Start";
-          toggleBtn.classList.remove("stop");
-          testProxyBtn.disabled = false;
-          logLine("Stopped.");
-          updateUI();
-          return;
-        }
+      stopBtn.addEventListener("click", () => {
+        if (!running) return;
+        running = false;
+        if (abort) abort.abort();
+        abort = null;
+        syncRunButtons();
+        logLine("Stopped.");
+        updateUI();
+      });
+
+      startBtn.addEventListener("click", () => {
+        if (running) return;
 
         void (async function startRun() {
           const u = urlEl.value.trim();
@@ -616,9 +640,7 @@
           running = true;
           abort = new AbortController();
           if (!startTime) startTime = performance.now();
-          toggleBtn.textContent = "Stop";
-          toggleBtn.classList.add("stop");
-          testProxyBtn.disabled = true;
+          syncRunButtons();
           logLine(
             "Started → " +
               getMethod() +
@@ -647,6 +669,7 @@
         if (running) updateUI();
       }, 500);
 
+      syncRunButtons();
       updateUI();
       logLine("Ready. Set URL, max batch size, optional delay between bursts, then Start.");
     })();
