@@ -28,7 +28,7 @@ Set these on the **Render** service (or local env) — they reduce blast radius 
 |----------|---------|
 | `STRESS_PROXY_ALLOWED_HOST_SUFFIXES` | Comma list, e.g. `.tools.mycompany.com,mycompany.com` — **only** matching hostnames can be forwarded (403 otherwise). |
 | `STRESS_PROXY_HTTPS_ONLY` | `1` or `true` — reject `http://` upstream URLs. |
-| `STRESS_PROXY_CORS_ORIGIN` | Your UI origin only, e.g. `https://stress-proxy.onrender.com` — replaces `Access-Control-Allow-Origin: *`. Use when the UI is always on that origin; a **local `file://` UI cannot call** a proxy locked to an `https` origin. |
+| `STRESS_PROXY_CORS_ORIGIN` | Comma-separated UI origins, e.g. `https://my-app.onrender.com,http://127.0.0.1:8765` (no trailing slashes). The proxy echoes `Origin` when it matches an entry; otherwise browsers block cross-origin reads. If unset, `Access-Control-Allow-Origin: *`. A **single** locked origin still fails when you open the UI from **localhost** or **`file://`** unless you add those origins here. |
 | `STRESS_PROXY_UPSTREAM_UA` | Custom `User-Agent` on outbound requests (default `InternalLoadTest/1.0`). |
 | `STRESS_PROXY_SAFE_ERRORS` | `1` — generic text for upstream failures in JSON (less detail in responses). |
 

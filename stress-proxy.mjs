@@ -8,7 +8,8 @@
  *   Use package.json + render.yaml. Set STRESS_PROXY_TOKEN in the dashboard (required on Render).
  *
  * Privacy / lock-down (optional env):
- *   STRESS_PROXY_CORS_ORIGIN     — e.g. https://stress-proxy.onrender.com (omit trailing slash). Locks ACAO instead of *.
+ *   STRESS_PROXY_CORS_ORIGIN     — comma-separated allowlist, e.g. https://app.onrender.com,http://127.0.0.1:8765
+ *                                  (omit trailing slashes). Echoes matching Origin; no * when list non-empty.
  *   STRESS_PROXY_ALLOWED_HOST_SUFFIXES — comma list: .corp.example.com,corp.example.com  (only these hostnames can be forwarded)
  *   STRESS_PROXY_HTTPS_ONLY      — set to 1 or true to reject non-https upstream URLs
  *   STRESS_PROXY_UPSTREAM_UA     — User-Agent for upstream fetch (default InternalLoadTest/1.0)
@@ -52,7 +53,10 @@ const HOST = (
 const TOKEN = process.env.STRESS_PROXY_TOKEN ? String(process.env.STRESS_PROXY_TOKEN).trim() : "";
 const MAX_BODY = 65536;
 
-const CORS_ORIGIN = (process.env.STRESS_PROXY_CORS_ORIGIN || "").trim().replace(/\/+$/, "");
+const CORS_ALLOWED = (process.env.STRESS_PROXY_CORS_ORIGIN || "")
+  .split(/[,;\n]/)
+  .map((s) => s.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
 const HOST_SUFFIXES = (process.env.STRESS_PROXY_ALLOWED_HOST_SUFFIXES || "")
   .split(/[,;\n]/)
   .map((s) => s.trim().toLowerCase())
@@ -72,18 +76,24 @@ if (ON_RENDER && !TOKEN) {
 
 const ALLOW_HEADERS = "Content-Type, Authorization, X-Stress-Proxy-Token";
 
-function applyCors(res) {
-  if (CORS_ORIGIN) {
-    res.setHeader("Access-Control-Allow-Origin", CORS_ORIGIN);
-  } else {
+function applyCors(req, res) {
+  const origin = String(req.headers.origin || "").trim();
+  if (!CORS_ALLOWED.length) {
     res.setHeader("Access-Control-Allow-Origin", "*");
+  } else if (!origin) {
+    // Same-origin fetch may omit Origin; curl and health checks have no Origin.
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  } else if (CORS_ALLOWED.some((o) => origin === o)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
   }
+  // Locked CORS + foreign Origin: omit ACAO so the browser blocks the response.
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", ALLOW_HEADERS);
 }
 
-function json(res, status, obj) {
-  applyCors(res);
+function json(req, res, status, obj) {
+  applyCors(req, res);
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.writeHead(status);
   res.end(JSON.stringify(obj));
@@ -132,12 +142,12 @@ function requireAuth(req, res, path) {
     return true;
   }
   if (tokenMatches(TOKEN, getClientToken(req))) return true;
-  json(res, 401, { ok: false, error: "unauthorized" });
+  json(req, res, 401, { ok: false, error: "unauthorized" });
   return false;
 }
 
 const server = http.createServer(async (req, res) => {
-  applyCors(res);
+  applyCors(req, res);
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -151,18 +161,18 @@ const server = http.createServer(async (req, res) => {
 
   if (path === "/health" || path === "/health/") {
     if (req.method === "GET") {
-      json(res, 200, {
+      json(req, res, 200, {
         ok: true,
         service: "stress-proxy",
         port: PORT,
         auth: Boolean(TOKEN),
         hostPolicy: Boolean(HOST_SUFFIXES.length),
         httpsOnly: HTTPS_ONLY,
-        corsLocked: Boolean(CORS_ORIGIN),
+        corsLocked: Boolean(CORS_ALLOWED.length),
       });
       return;
     }
-    json(res, 405, { ok: false, error: "use GET /health" });
+      json(req, res, 405, { ok: false, error: "use GET /health" });
     return;
   }
 
@@ -173,7 +183,7 @@ const server = http.createServer(async (req, res) => {
         sendHtml(res, 200, indexBody);
         return;
       }
-      json(res, 200, {
+      json(req, res, 200, {
         ok: true,
         service: "stress-proxy",
         port: PORT,
@@ -186,17 +196,17 @@ const server = http.createServer(async (req, res) => {
       });
       return;
     }
-    json(res, 405, { ok: false, error: "use GET / for UI" });
+    json(req, res, 405, { ok: false, error: "use GET / for UI" });
     return;
   }
 
   if (path !== "/forward" && path !== "/forward/") {
-    json(res, 404, { ok: false, error: "unknown path — try GET /health or POST /forward" });
+    json(req, res, 404, { ok: false, error: "unknown path — try GET /health or POST /forward" });
     return;
   }
 
   if (req.method !== "POST") {
-    json(res, 405, { ok: false, error: "use POST" });
+    json(req, res, 405, { ok: false, error: "use POST" });
     return;
   }
 
@@ -205,12 +215,12 @@ const server = http.createServer(async (req, res) => {
     for await (const chunk of req) {
       buf += chunk;
       if (buf.length > MAX_BODY) {
-        json(res, 413, { ok: false, error: "body too large" });
+        json(req, res, 413, { ok: false, error: "body too large" });
         return;
       }
     }
   } catch {
-    json(res, 400, { ok: false, error: "read body failed" });
+    json(req, res, 400, { ok: false, error: "read body failed" });
     return;
   }
 
@@ -218,7 +228,7 @@ const server = http.createServer(async (req, res) => {
   try {
     payload = JSON.parse(buf || "{}");
   } catch {
-    json(res, 400, { ok: false, error: "invalid JSON" });
+    json(req, res, 400, { ok: false, error: "invalid JSON" });
     return;
   }
 
@@ -229,22 +239,22 @@ const server = http.createServer(async (req, res) => {
   try {
     u = new URL(targetUrl);
   } catch {
-    json(res, 400, { ok: false, error: "invalid url" });
+    json(req, res, 400, { ok: false, error: "invalid url" });
     return;
   }
 
   if (u.protocol !== "http:" && u.protocol !== "https:") {
-    json(res, 400, { ok: false, error: "only http and https URLs" });
+    json(req, res, 400, { ok: false, error: "only http and https URLs" });
     return;
   }
 
   if (HTTPS_ONLY && u.protocol !== "https:") {
-    json(res, 400, { ok: false, error: "https only" });
+    json(req, res, 400, { ok: false, error: "https only" });
     return;
   }
 
   if (!hostAllowed(u.hostname)) {
-    json(res, 403, { ok: false, error: "host not allowed" });
+    json(req, res, 403, { ok: false, error: "host not allowed" });
     return;
   }
 
@@ -269,7 +279,7 @@ const server = http.createServer(async (req, res) => {
     }
     clearTimeout(to);
     const upstreamMs = Date.now() - t0;
-    json(res, 200, { ok: true, status: r.status, upstreamMs });
+    json(req, res, 200, { ok: true, status: r.status, upstreamMs });
   } catch (e) {
     clearTimeout(to);
     const upstreamMs = Date.now() - t0;
@@ -278,7 +288,7 @@ const server = http.createServer(async (req, res) => {
       : e && e.message
         ? String(e.message)
         : String(e);
-    json(res, 200, { ok: false, error: msg, upstreamMs });
+    json(req, res, 200, { ok: false, error: msg, upstreamMs });
   }
 });
 
@@ -298,7 +308,9 @@ server.listen(PORT, HOST, () => {
     console.log("STRESS_PROXY_ALLOWED_HOST_SUFFIXES active (" + HOST_SUFFIXES.length + " entries).");
   }
   if (HTTPS_ONLY) console.log("STRESS_PROXY_HTTPS_ONLY: upstream URLs must use https.");
-  if (CORS_ORIGIN) console.log("STRESS_PROXY_CORS_ORIGIN: browser API limited to " + CORS_ORIGIN);
+  if (CORS_ALLOWED.length) {
+    console.log("STRESS_PROXY_CORS_ORIGIN: allowlist (" + CORS_ALLOWED.length + "): " + CORS_ALLOWED.join(", "));
+  }
   if (SAFE_ERRORS) console.log("STRESS_PROXY_SAFE_ERRORS: generic upstream error text.");
   if ((HOST === "0.0.0.0" || HOST === "::") && !TOKEN) {
     console.warn("WARNING: wide bind without STRESS_PROXY_TOKEN — SSRF risk.");

@@ -210,6 +210,8 @@
         <strong>Render:</strong> open your service URL (root <code>/</code>); Proxy base defaults to the same origin on
         <code>*.onrender.com</code>. Set <code>STRESS_PROXY_TOKEN</code> in the dashboard; paste it here for runs (not stored). Token is
         session-only after refresh. For company-only tests, set <code>STRESS_PROXY_ALLOWED_HOST_SUFFIXES</code> on the server (see README).
+        If the dashboard sets <code>STRESS_PROXY_CORS_ORIGIN</code>, list every UI origin (comma-separated), e.g. your Render URL plus
+        <code>http://127.0.0.1:8765</code> when testing locally — otherwise the browser reports CORS on every request.
       </p>
       <label class="check" style="margin-top: 0.75rem">
         <input type="checkbox" id="privacyLog" />
