@@ -7,16 +7,38 @@
  * Render Web Service:
  *   Use package.json + render.yaml (or manual Web Service). Set STRESS_PROXY_TOKEN in the dashboard (required).
  *   Render sets PORT; this process listens on that port. Bind defaults to 0.0.0.0 when RENDER=true.
- *   GET /health has no token (platform health checks); POST /forward still requires Bearer token.
+ *   GET /health has no token (platform health checks). GET / serves index.html (no token). POST /forward requires Bearer token.
  *
  * Vercel:
- *   Deploy only the static HTML, or skip Vercel for the proxy — serverless is a poor fit (timeouts, cost, abuse).
- *   Point “Proxy base” in the HTML at your Render URL.
+ *   Optional static host for index.html only; on Render, open the service root URL — UI and proxy are the same origin.
  *
  * Env: PORT (Render), STRESS_PROXY_PORT (fallback), STRESS_PROXY_HOST, STRESS_PROXY_TOKEN, RENDER (auto).
  */
 import http from "node:http";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+let indexHtmlCache = null;
+function getIndexHtml() {
+  if (indexHtmlCache !== null) return indexHtmlCache;
+  try {
+    indexHtmlCache = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+  } catch {
+    indexHtmlCache = "";
+  }
+  return indexHtmlCache;
+}
+
+function sendHtml(res, status, body) {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.writeHead(status);
+  res.end(body);
+}
 
 const ON_RENDER = Boolean(process.env.RENDER);
 const PORT =
@@ -70,7 +92,13 @@ function tokenMatches(expected, provided) {
 
 function requireAuth(req, res, path) {
   if (!TOKEN) return true;
-  if (req.method === "GET" && (path === "/health" || path === "/health/")) {
+  if (
+    req.method === "GET" &&
+    (path === "/health" ||
+      path === "/health/" ||
+      path === "/" ||
+      path === "")
+  ) {
     return true;
   }
   if (tokenMatches(TOKEN, getClientToken(req))) return true;
@@ -102,11 +130,17 @@ const server = http.createServer(async (req, res) => {
 
   if (path === "/" || path === "") {
     if (req.method === "GET") {
+      const indexBody = getIndexHtml();
+      if (indexBody) {
+        sendHtml(res, 200, indexBody);
+        return;
+      }
       json(res, 200, {
         ok: true,
         service: "stress-proxy",
         port: PORT,
         authRequired: Boolean(TOKEN),
+        note: "index.html missing next to stress-proxy.mjs",
         endpoints: {
           "GET /health": "reachability check",
           "POST /forward": 'JSON body: { "url": "https://…", "method": "GET" }',
@@ -114,7 +148,7 @@ const server = http.createServer(async (req, res) => {
       });
       return;
     }
-    json(res, 405, { ok: false, error: "use GET / for info" });
+    json(res, 405, { ok: false, error: "use GET / for UI" });
     return;
   }
 
@@ -197,9 +231,13 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Stress proxy listening on http://${HOST}:${PORT}`);
-  if (ON_RENDER) console.log("Render: use your service HTTPS URL as Proxy base in the HTML; set Proxy token to STRESS_PROXY_TOKEN.");
+  if (ON_RENDER) {
+    console.log("Render: open the service root URL in a browser for the UI; set Proxy token to STRESS_PROXY_TOKEN for load tests.");
+  }
   if (TOKEN) {
-    console.log("Auth: Bearer (or X-Stress-Proxy-Token) required for /forward and GET /. GET /health is public.");
+    console.log(
+      "Auth: Bearer (or X-Stress-Proxy-Token) required for POST /forward. GET / and GET /health are public."
+    );
   } else {
     console.warn("Auth: disabled — set STRESS_PROXY_TOKEN if this port is reachable beyond localhost.");
   }

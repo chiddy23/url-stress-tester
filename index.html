@@ -165,9 +165,10 @@
 <body>
   <h1>URL stress tester</h1>
   <p class="warn">
-    Use only on systems you own or have explicit permission to load-test. In the browser alone, cross-origin
-    <code>fetch</code> is blocked unless the target sends CORS headers. To hit arbitrary <code>http(s)</code> URLs anyway,
-    enable the proxy below (same repo: <code>stress-proxy.mjs</code> on Render or locally). For heavy prod tests, prefer k6 or wrk.
+    Use only on systems you own or have explicit permission to load-test. On <strong>Render</strong>, this page is served from the
+    same app as the proxy — enable <strong>Use proxy</strong>, set <strong>Proxy base</strong> to this site’s origin (auto-filled on
+    <code>*.onrender.com</code>), and paste your <strong>Proxy token</strong> (same value as <code>STRESS_PROXY_TOKEN</code>). For heavy
+    prod tests, prefer k6 or wrk.
   </p>
 
   <div class="grid">
@@ -188,11 +189,10 @@
       <label for="proxyToken" style="margin-top: 0.65rem">Proxy token (optional)</label>
       <input id="proxyToken" type="password" placeholder="Only if server has STRESS_PROXY_TOKEN set — not saved in the browser" autocomplete="off" />
       <p class="hint" style="margin-top: 0.65rem; margin-bottom: 0">
-        Local: <code>node stress-proxy.mjs</code> (default <code>127.0.0.1</code>). <strong>Render:</strong> deploy this repo with
-        <code>package.json</code> + <code>render.yaml</code>, set <code>STRESS_PROXY_TOKEN</code> in the Render dashboard, then use
-        your <code>https://…onrender.com</code> URL as Proxy base (token required for load; <code>GET /health</code> stays public for
-        Render’s probe). <strong>Vercel:</strong> fine for hosting the HTML only — run the proxy on Render (or a VPN box), not as
-        Vercel serverless. Token is session-only (re-enter after refresh).
+        <strong>Local:</strong> <code>node stress-proxy.mjs</code>, open this file, Proxy base <code>http://127.0.0.1:8765</code>.
+        <strong>Render:</strong> open your service URL (root <code>/</code>); Proxy base defaults to the same origin on
+        <code>*.onrender.com</code>. Set <code>STRESS_PROXY_TOKEN</code> in the dashboard; paste it here for runs (not stored). Token is
+        session-only after refresh.
       </p>
     </div>
     <div class="row">
@@ -341,6 +341,23 @@
       }
 
       loadProxySettings();
+
+      (function defaultProxyForRender() {
+        try {
+          const u = new URL(window.location.href);
+          if (u.protocol !== "https:" || !u.hostname.endsWith("onrender.com")) return;
+          const saved = localStorage.getItem("stressTesterProxyBase");
+          const cur = proxyBaseEl.value.trim();
+          if (saved) return;
+          if (!cur || cur.startsWith("http://127.0.0.1")) {
+            proxyBaseEl.value = u.origin;
+            useProxyEl.checked = true;
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      })();
+
       useProxyEl.addEventListener("change", persistProxySettings);
       proxyBaseEl.addEventListener("blur", persistProxySettings);
 
