@@ -580,7 +580,9 @@
           const batch = [];
           for (let i = 0; i < n; i++) batch.push(oneRequest(signal, target, method));
           await Promise.allSettled(batch);
+          if (running) updateUI();
           if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+          if (running) updateUI();
         }
       }
 
@@ -667,7 +669,7 @@
 
       setInterval(() => {
         if (running) updateUI();
-      }, 500);
+      }, 200);
 
       syncRunButtons();
       updateUI();
