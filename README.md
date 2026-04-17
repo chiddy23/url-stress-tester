@@ -20,6 +20,20 @@ Then open **`http://127.0.0.1:8765/`** in a browser (or open `index.html` as a f
 
 **Health check:** `GET /health` (no token). **Load:** `POST /forward` (Bearer token required when `STRESS_PROXY_TOKEN` is set).
 
+## Privacy / company-only lock-down (optional)
+
+Set these on the **Render** service (or local env) — they reduce blast radius and fingerprinting; they are **not** a VPN.
+
+| Variable | Purpose |
+|----------|---------|
+| `STRESS_PROXY_ALLOWED_HOST_SUFFIXES` | Comma list, e.g. `.tools.mycompany.com,mycompany.com` — **only** matching hostnames can be forwarded (403 otherwise). |
+| `STRESS_PROXY_HTTPS_ONLY` | `1` or `true` — reject `http://` upstream URLs. |
+| `STRESS_PROXY_CORS_ORIGIN` | Your UI origin only, e.g. `https://stress-proxy.onrender.com` — replaces `Access-Control-Allow-Origin: *`. Use when the UI is always on that origin; a **local `file://` UI cannot call** a proxy locked to an `https` origin. |
+| `STRESS_PROXY_UPSTREAM_UA` | Custom `User-Agent` on outbound requests (default `InternalLoadTest/1.0`). |
+| `STRESS_PROXY_SAFE_ERRORS` | `1` — generic text for upstream failures in JSON (less detail in responses). |
+
+In the **browser UI**, enable **“Redact full URLs in the activity log”** so the on-screen log shows `https://host/…` instead of full paths and query strings (the target URL field is unchanged; only log lines are redacted).
+
 ## Safety
 
-Only test targets you are allowed to hit. The proxy can request arbitrary `http(s)` URLs (SSRF-shaped); keep **`STRESS_PROXY_TOKEN`** strong and rotate if leaked.
+Only test targets you are allowed to hit. The proxy can request arbitrary `http(s)` URLs unless **`STRESS_PROXY_ALLOWED_HOST_SUFFIXES`** is set. Keep **`STRESS_PROXY_TOKEN`** strong and rotate if leaked.

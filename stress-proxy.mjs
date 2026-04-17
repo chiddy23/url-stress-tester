@@ -5,14 +5,16 @@
  *   node stress-proxy.mjs
  *
  * Render Web Service:
- *   Use package.json + render.yaml (or manual Web Service). Set STRESS_PROXY_TOKEN in the dashboard (required).
- *   Render sets PORT; this process listens on that port. Bind defaults to 0.0.0.0 when RENDER=true.
- *   GET /health has no token (platform health checks). GET / serves index.html (no token). POST /forward requires Bearer token.
+ *   Use package.json + render.yaml. Set STRESS_PROXY_TOKEN in the dashboard (required on Render).
  *
- * Vercel:
- *   Optional static host for index.html only; on Render, open the service root URL — UI and proxy are the same origin.
+ * Privacy / lock-down (optional env):
+ *   STRESS_PROXY_CORS_ORIGIN     — e.g. https://stress-proxy.onrender.com (omit trailing slash). Locks ACAO instead of *.
+ *   STRESS_PROXY_ALLOWED_HOST_SUFFIXES — comma list: .corp.example.com,corp.example.com  (only these hostnames can be forwarded)
+ *   STRESS_PROXY_HTTPS_ONLY      — set to 1 or true to reject non-https upstream URLs
+ *   STRESS_PROXY_UPSTREAM_UA     — User-Agent for upstream fetch (default InternalLoadTest/1.0)
+ *   STRESS_PROXY_SAFE_ERRORS     — set to 1 to hide upstream error text in JSON responses
  *
- * Env: PORT (Render), STRESS_PROXY_PORT (fallback), STRESS_PROXY_HOST, STRESS_PROXY_TOKEN, RENDER (auto).
+ * Env: PORT, STRESS_PROXY_PORT, STRESS_PROXY_HOST, STRESS_PROXY_TOKEN, RENDER (auto).
  */
 import http from "node:http";
 import crypto from "node:crypto";
@@ -36,6 +38,7 @@ function getIndexHtml() {
 function sendHtml(res, status, body) {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
   res.writeHead(status);
   res.end(body);
 }
@@ -49,6 +52,19 @@ const HOST = (
 const TOKEN = process.env.STRESS_PROXY_TOKEN ? String(process.env.STRESS_PROXY_TOKEN).trim() : "";
 const MAX_BODY = 65536;
 
+const CORS_ORIGIN = (process.env.STRESS_PROXY_CORS_ORIGIN || "").trim().replace(/\/+$/, "");
+const HOST_SUFFIXES = (process.env.STRESS_PROXY_ALLOWED_HOST_SUFFIXES || "")
+  .split(/[,;\n]/)
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+const HTTPS_ONLY =
+  process.env.STRESS_PROXY_HTTPS_ONLY === "1" ||
+  String(process.env.STRESS_PROXY_HTTPS_ONLY || "").toLowerCase() === "true";
+const UPSTREAM_UA = (process.env.STRESS_PROXY_UPSTREAM_UA || "").trim() || "InternalLoadTest/1.0";
+const SAFE_ERRORS =
+  process.env.STRESS_PROXY_SAFE_ERRORS === "1" ||
+  String(process.env.STRESS_PROXY_SAFE_ERRORS || "").toLowerCase() === "true";
+
 if (ON_RENDER && !TOKEN) {
   console.error("Render: set STRESS_PROXY_TOKEN in Environment. Refusing to start without it.");
   process.exit(1);
@@ -56,17 +72,31 @@ if (ON_RENDER && !TOKEN) {
 
 const ALLOW_HEADERS = "Content-Type, Authorization, X-Stress-Proxy-Token";
 
-function setCORS(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+function applyCors(res) {
+  if (CORS_ORIGIN) {
+    res.setHeader("Access-Control-Allow-Origin", CORS_ORIGIN);
+  } else {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", ALLOW_HEADERS);
 }
 
 function json(res, status, obj) {
-  setCORS(res);
+  applyCors(res);
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.writeHead(status);
   res.end(JSON.stringify(obj));
+}
+
+function hostAllowed(hostname) {
+  if (!HOST_SUFFIXES.length) return true;
+  const h = String(hostname).toLowerCase();
+  return HOST_SUFFIXES.some((e) => {
+    if (!e) return false;
+    if (e.startsWith(".")) return h === e.slice(1) || h.endsWith(e);
+    return h === e || h.endsWith("." + e);
+  });
 }
 
 function getClientToken(req) {
@@ -107,7 +137,7 @@ function requireAuth(req, res, path) {
 }
 
 const server = http.createServer(async (req, res) => {
-  setCORS(res);
+  applyCors(res);
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -121,7 +151,15 @@ const server = http.createServer(async (req, res) => {
 
   if (path === "/health" || path === "/health/") {
     if (req.method === "GET") {
-      json(res, 200, { ok: true, service: "stress-proxy", port: PORT, auth: Boolean(TOKEN) });
+      json(res, 200, {
+        ok: true,
+        service: "stress-proxy",
+        port: PORT,
+        auth: Boolean(TOKEN),
+        hostPolicy: Boolean(HOST_SUFFIXES.length),
+        httpsOnly: HTTPS_ONLY,
+        corsLocked: Boolean(CORS_ORIGIN),
+      });
       return;
     }
     json(res, 405, { ok: false, error: "use GET /health" });
@@ -200,6 +238,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (HTTPS_ONLY && u.protocol !== "https:") {
+    json(res, 400, { ok: false, error: "https only" });
+    return;
+  }
+
+  if (!hostAllowed(u.hostname)) {
+    json(res, 403, { ok: false, error: "host not allowed" });
+    return;
+  }
+
   const t0 = Date.now();
   const ac = new AbortController();
   const to = setTimeout(() => ac.abort(), 120000);
@@ -208,6 +256,7 @@ const server = http.createServer(async (req, res) => {
       method,
       redirect: "manual",
       signal: ac.signal,
+      headers: { "User-Agent": UPSTREAM_UA },
     });
     if (r.body) {
       try {
@@ -224,7 +273,11 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     clearTimeout(to);
     const upstreamMs = Date.now() - t0;
-    const msg = e && e.message ? String(e.message) : String(e);
+    const msg = SAFE_ERRORS
+      ? "upstream request failed"
+      : e && e.message
+        ? String(e.message)
+        : String(e);
     json(res, 200, { ok: false, error: msg, upstreamMs });
   }
 });
@@ -241,9 +294,14 @@ server.listen(PORT, HOST, () => {
   } else {
     console.warn("Auth: disabled — set STRESS_PROXY_TOKEN if this port is reachable beyond localhost.");
   }
+  if (HOST_SUFFIXES.length) {
+    console.log("STRESS_PROXY_ALLOWED_HOST_SUFFIXES active (" + HOST_SUFFIXES.length + " entries).");
+  }
+  if (HTTPS_ONLY) console.log("STRESS_PROXY_HTTPS_ONLY: upstream URLs must use https.");
+  if (CORS_ORIGIN) console.log("STRESS_PROXY_CORS_ORIGIN: browser API limited to " + CORS_ORIGIN);
+  if (SAFE_ERRORS) console.log("STRESS_PROXY_SAFE_ERRORS: generic upstream error text.");
   if ((HOST === "0.0.0.0" || HOST === "::") && !TOKEN) {
     console.warn("WARNING: wide bind without STRESS_PROXY_TOKEN — SSRF risk.");
   }
-  console.log("POST /forward  body: {\"url\":\"https://…\",\"method\":\"GET\"}");
   console.log("Ctrl+C to stop.");
 });

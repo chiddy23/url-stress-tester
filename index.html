@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
   <title>URL stress tester</title>
   <style>
     :root {
@@ -192,8 +193,12 @@
         <strong>Local:</strong> <code>node stress-proxy.mjs</code>, open this file, Proxy base <code>http://127.0.0.1:8765</code>.
         <strong>Render:</strong> open your service URL (root <code>/</code>); Proxy base defaults to the same origin on
         <code>*.onrender.com</code>. Set <code>STRESS_PROXY_TOKEN</code> in the dashboard; paste it here for runs (not stored). Token is
-        session-only after refresh.
+        session-only after refresh. For company-only tests, set <code>STRESS_PROXY_ALLOWED_HOST_SUFFIXES</code> on the server (see README).
       </p>
+      <label class="check" style="margin-top: 0.75rem">
+        <input type="checkbox" id="privacyLog" />
+        Redact full URLs in the activity log (shows <code>origin + /…</code> instead of query strings and paths)
+      </label>
     </div>
     <div class="row">
       <div class="field">
@@ -265,6 +270,7 @@
       const proxyBaseEl = $("proxyBase");
       const proxyTokenEl = $("proxyToken");
       const testProxyBtn = $("testProxyBtn");
+      const privacyLogEl = $("privacyLog");
 
       let running = false;
       let abort = null;
@@ -361,6 +367,19 @@
       useProxyEl.addEventListener("change", persistProxySettings);
       proxyBaseEl.addEventListener("blur", persistProxySettings);
 
+      try {
+        if (localStorage.getItem("stressTesterPrivacyLog") === "1") privacyLogEl.checked = true;
+      } catch (_) {
+        /* ignore */
+      }
+      privacyLogEl.addEventListener("change", () => {
+        try {
+          localStorage.setItem("stressTesterPrivacyLog", privacyLogEl.checked ? "1" : "0");
+        } catch (_) {
+          /* ignore */
+        }
+      });
+
       testProxyBtn.addEventListener("click", async () => {
         const pb = proxyBaseEl.value.trim();
         if (!pb) {
@@ -406,9 +425,21 @@
         clampMaxBatchInput();
       });
 
+      function redactUrlsForLog(s) {
+        if (!privacyLogEl.checked) return s;
+        return s.replace(/https?:\/\/[^\s)]+/g, (m) => {
+          try {
+            const u = new URL(m);
+            return u.origin + "/…";
+          } catch (_) {
+            return "[url]";
+          }
+        });
+      }
+
       function logLine(msg) {
         const div = document.createElement("div");
-        div.textContent = new Date().toISOString().slice(11, 23) + " " + msg;
+        div.textContent = new Date().toISOString().slice(11, 23) + " " + redactUrlsForLog(msg);
         logEl.prepend(div);
         while (logEl.children.length > maxLogLines) logEl.removeChild(logEl.lastChild);
       }
